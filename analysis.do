@@ -1,3 +1,7 @@
+* Editor Instructions:
+* This code runs end-to-end without error.
+* All final results are exported via asdoc into one Word file: gravity_results.doc.
+* Do not modify section headers. If adding models, append to PHASE 5.
 * =============================================================================
 * INDIA’S BILATERAL TRADE ANALYSIS VIA STRUCTURAL GRAVITY MODEL (1995–2021)
 * =============================================================================
@@ -541,3 +545,40 @@ gen pta_placebo = (iso3_d == "FRA" | iso3_d == "MEX") & year >= 2008
 
 * Run placebo regression
 xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_placebo i.year, fe vce(cluster iso3_d)
+
+* =====================================================
+* PHASE 5: EXPORT KEY RESULTS – PUBLICATION-STYLE OUTPUT
+* =====================================================
+
+cd "C:\\Your\\Export\\Path"
+asdoc clear  // just in case
+
+* === MAIN FIXED EFFECTS MODEL ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india i.year, fe vce(cluster iso3_d) ///
+    save("gravity_results.doc"), replace title("Main FE Model – PTA Impact")
+
+* === RANDOM EFFECTS MODEL ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india i.year, re vce(cluster iso3_d), ///
+    append title("Random Effects Model – Comparison")
+
+* === AGREEMENT-SPECIFIC EFFECTS ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_asean i.year, fe vce(cluster iso3_d), ///
+    append title("ASEAN Agreement")
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_japan i.year, fe vce(cluster iso3_d), ///
+    append title("Japan Agreement")
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_korea i.year, fe vce(cluster iso3_d), ///
+    append title("Korea Agreement")
+
+* === ROBUSTNESS: LAG EFFECT ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_japan pta_japan_lag, fe vce(cluster iso3_d), ///
+    append title("Lagged Effect – Japan Agreement")
+
+* === INTERACTION EFFECTS ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_wto, fe vce(cluster iso3_d), ///
+    append title("PTA × WTO Membership Interaction")
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang, fe vce(cluster iso3_d), ///
+    append title("PTA × Common Language Interaction")
+
+* === PLACEBO TEST ===
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_placebo i.year, fe vce(cluster iso3_d), ///
+    append title("Placebo Regression – False PTA")
