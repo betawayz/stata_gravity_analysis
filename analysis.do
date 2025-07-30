@@ -26,37 +26,29 @@
 *                         - Random Effects (for comparison)
 *                         - Hausman test
 *                         - Robustness checks (interaction terms, subgroup analysis)
-*
 * =============================================================================
 
+* (1) Loading data
 clear
 cls
-
-* ---------------------------------------------------------------
-* INITIAL EXPLORATION
-* Purpose: Understand how the data is, before any other analysis.
-* ---------------------------------------------------------------
-
-* (1) Load and filter dataset
-* - I am only interested in India as the origin country (iso3_o == "IND")
-* - I restrict the period to 1995–2021 for contemporary relevance
-
-* NOTE: Please change this to gravity_model.dta path
-use "C:\Users\Administrator\Desktop\WORK\Assignments\ONES\Stata Thesis\gravity_model.dta", clear
-keep if iso3_o == "IND"
-keep if year >= 1995 & year <= 2021
+cd "C:\Users\Administrator\Desktop\WORK\Assignments\ONES\Stata Thesis"
+* Load preprocessed dataset with all factor variables included
+use "gravity_final_with_factors.dta", clear
 
 * (2) Inspect the dataset structure and spot missingness
 * - describe: metadata (var names, types, labels)
 * - misstable summarize: good first check for NAs and completeness
 describe
 misstable summarize
+misstable summarize emp_o emp_d hc_o hc_d cn_o cn_d land_o land_d kl_diff landl_diff hc_diff
+
 
 * (3) Summary statistics of core economic and geographic variables
 * These are the basis of the gravity model, so I need to know:
 * - whether values are realistic (range, scale)
 * - whether any are highly skewed or prone to transformation
 summarize tradeflow_baci gdp_o gdp_d dist pop_o pop_d
+summarize kl_diff landl_diff hc_diff emp_o emp_d cn_o cn_d land_o land_d
 
 * (4) Visualize the trade flow distribution
 * - histogram with normal curve: shows skewness, long-tail nature
@@ -71,6 +63,7 @@ tab iso3_d if tradeflow_baci > 0, sort
 * (6) Descriptive summary of key gravity variables
 * - I will use this for interpreting coefficient magnitude
 tabstat tradeflow_baci gdp_o gdp_d dist, stat(mean sd min max n) columns(statistics)
+tabstat kl_diff landl_diff hc_diff, stat(mean sd min max n) columns(statistics)
 
 * (7) Visualize India’s total outbound trade trend (1995–2021)
 * - Sum trade values for each year (across all partners)
@@ -78,7 +71,30 @@ tabstat tradeflow_baci gdp_o gdp_d dist, stat(mean sd min max n) columns(statist
 bysort year (iso3_d): gen one = 1  // dummy to enable collapse safely
 preserve
 collapse (sum) tradeflow_baci, by(year)
-twoway (line tradeflow_baci year), title("India’s Total Trade Over Time")
+
+* Generate a smoother for visualization (optional)
+gen tradeflow_baci_millions = tradeflow_baci / 1e6
+
+* Plot the line graph of total trade value
+twoway (line tradeflow_baci_millions year, lwidth(medthick)), ///
+    title("India’s Total Outbound Trade (1995–2021)") ///
+    ytitle("Total Exports (Million USD)") ///
+    xtitle("Year") ///
+    ylabel(, angle(horizontal)) ///
+    xlabel(1995(5)2021) ///
+    graphregion(color(white))
+
+* Optional: Add vertical lines for known events
+* For reference points like WTO entry (1995), ASEAN FTA (2010), COVID (2020)
+line tradeflow_baci_millions year, ///
+    lcolor(blue) lwidth(medium) ///
+    title("India’s Total Outbound Trade & Key Events") ///
+    ytitle("Million USD") xtitle("Year") ///
+    xline(1995 2010 2020, lpattern(dash) lcolor(red)) ///
+    legend(off)
+
+* Optional: Export graph
+graph export "India_Trade_Trend.png", width(1000) replace
 restore
 
 * ---------------------------------------------------------------
@@ -88,17 +104,17 @@ restore
 * ---------------------------------------------------------------
 
 * Check for completeness across essential gravity model variables
-summarize tradeflow_baci gdp_d pop_d dist
-count if missing(tradeflow_baci, gdp_d, pop_d, dist)
+summarize tradeflow_baci gdp_d pop_d dist kl_diff landl_diff hc_diff
+count if missing(tradeflow_baci, gdp_d, pop_d, dist, kl_diff, landl_diff, hc_diff)
 
 * Explore the distribution of missing values across time
 * - Is there an increase in recent years (e.g., 2021)?
 * - Does early data suffer from poor coverage?
-tab year if missing(tradeflow_baci, gdp_d, pop_d, dist)
+tab year if missing(tradeflow_baci, gdp_d, pop_d, dist, kl_diff, landl_diff, hc_diff)
 
 * Explore which countries are contributing to missing values
 * - Useful to know whether we’re losing strategic partners
-tab iso3_d if missing(tradeflow_baci, gdp_d, pop_d, dist)
+tab iso3_d if missing(tradeflow_baci, gdp_d, pop_d, dist, kl_diff, landl_diff, hc_diff)
 
 * ----------------------------------------
 * VERDICT:
@@ -108,8 +124,7 @@ tab iso3_d if missing(tradeflow_baci, gdp_d, pop_d, dist)
 * (3) Therefore, I do not impute values (would introduce bias in structural gravity models).
 * (4) Instead, we drop rows with missing core variables for robustness.
 
-drop if missing(tradeflow_baci, gdp_d, pop_d, dist)
-
+drop if missing(tradeflow_baci, gdp_d, pop_d, dist, kl_diff, landl_diff, hc_diff)
 
 * ---------------------------------------------
 * VARIABLE CREATION – India Gravity Dataset
@@ -173,6 +188,13 @@ gen pta_nepal = (iso3_d == "NPL") & year >= 2009
 * This will be used to estimate the average treatment effect of PTAs
 gen pta_india = pta_srilanka | pta_asean | pta_japan | pta_korea | pta_bhutan | pta_nepal
 
+* Interaction with factor differences
+* The following will allow for this:
+* Does PTA impact vary by structural factor distance?
+gen pta_kl = pta_india * kl_diff
+gen pta_landl = pta_india * landl_diff
+gen pta_hc = pta_india * hc_diff
+
 
 * ----------------------------------------------------
 * OPTIONAL INTERACTION TERMS – For Robustness Analysis
@@ -199,6 +221,8 @@ gen pta_wto = pta_india * wto_d if !missing(wto_d)
 
 * Inspect summary stats for log-transformed continuous variables
 summarize ln_trade ln_gdp_o ln_gdp_d ln_dist
+* summary stats for factor variables
+summarize kl_diff landl_diff hc_diff
 
 * Check overall distribution of PTA dummies
 tab pta_india
@@ -206,10 +230,8 @@ tab pta_india
 * List destination countries flagged under PTA arrangements
 tab iso3_d if pta_india == 1, sort
 
-* If needed later, I can check the distributions of interaction terms
-* uncommenting the below:
-* tabstat pta_comlang pta_wto, stat(mean sd min max n)
-
+* I check the distributions of interaction terms
+tabstat pta_comlang pta_wto, stat(mean sd min max n)
 
 
 * ------------------------------------------------------------------
@@ -224,7 +246,7 @@ tab iso3_d if pta_india == 1, sort
 * (2.1) Summary Statistics for Core Variables
 * These help in essential for understanding scale,
 * variation, and potential anomalies
-summarize ln_trade ln_gdp_o ln_gdp_d ln_dist tradeflow_baci gdp_o gdp_d dist
+summarize ln_trade ln_gdp_o ln_gdp_d ln_dist tradeflow_baci gdp_o gdp_d dist kl_diff landl_diff hc_diff
 
 * Summary stats for policy variables and interactions
 tabstat pta_india pta_comlang pta_wto, stat(mean sd min max n)
@@ -232,6 +254,9 @@ tabstat pta_india pta_comlang pta_wto, stat(mean sd min max n)
 * Compare core variables by PTA status – shows how PTA partners differ
 tabstat ln_trade ln_gdp_o ln_gdp_d ln_dist if pta_india==1, stat(mean sd min max n)
 tabstat ln_trade ln_gdp_o ln_gdp_d ln_dist if pta_india==0, stat(mean sd min max n)
+* compare factor differences by PTA status
+tabstat kl_diff landl_diff hc_diff if pta_india == 1, stat(mean sd min max n)
+tabstat kl_diff landl_diff hc_diff if pta_india == 0, stat(mean sd min max n)
 
 
 * (2.2) India's Trade Trend Over Time (Aggregated)
@@ -251,6 +276,8 @@ mean ln_trade if pta_india == 0
 
 * Run t-test to check significance
 ttest ln_trade, by(pta_india)
+* comparison of factor proportions across PTA vs. non-PTA.
+ttest kl_diff, by(pta_india)
 
 * Optional: visualize this comparison
 graph box ln_trade, over(pta_india, label(labsize(medium))) ///
@@ -272,6 +299,12 @@ twoway (scatter ln_trade ln_dist), ///
 * Ovelay of a lowess smoother to better see trends
 twoway (scatter ln_trade ln_dist) (lowess ln_trade ln_dist), ///
     title("Trade vs. Distance with Lowess Fit")
+	
+*  tests whether factor distance has visual explanatory power
+* — helpful before formal regression.
+twoway (scatter ln_trade kl_diff), ///
+    title("India’s Trade vs. Capital per Worker Difference") ///
+    xtitle("Capital per Worker Diff (K/L)") ytitle("Log Trade Flow")
 
 
 * (2.5) Top Trading Partners
@@ -285,6 +318,14 @@ gsort -tradeflow_baci
 list iso3_d tradeflow_baci in 1/10  // Top 10 partners
 restore
 
+*  top PTA countries by trade volume
+preserve
+keep if pta_india == 1
+collapse (sum) tradeflow_baci, by(iso3_d)
+gsort -tradeflow_baci
+list iso3_d tradeflow_baci in 1/5  // Top PTA partners
+restore
+
 
 * ---------------------------------------------------------------
 * Summary:
@@ -295,12 +336,11 @@ restore
 *   - Highlights the intuitive roles of GDP and distance
 * ---------------------------------------------------------------
 
-
 * ---------------------------------------------------------------
 * PHASE 3: MODEL ESTIMATION – Structural Gravity Models
 
-* Objective: I estimate the effects of economic size, distance, and
-*            preferential trade agreements (PTAs) on India's bilateral trade
+* Objective: I estimate the effects of economic size, distance, factor endowments, 
+*            and preferential trade agreements (PTAs) on India's bilateral trade
 * ---------------------------------------------------------------
 
 * PREPARATION: Create unique dyad identifier for panel regressions
@@ -311,66 +351,62 @@ egen dyadid = group(iso3_d)
 xtset dyadid year
 
 
-
 * (3.1) Baseline Pooled OLS Model
 * No fixed effects. Useful as a reference model.
 * Clustered standard errors by destination country.
-reg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, vce(cluster iso3_d)
+reg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, vce(cluster iso3_d)
 
 * Include year fixed effects to capture global time shocks
-reg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india i.year, vce(cluster iso3_d)
-
+reg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, vce(cluster iso3_d)
 
 
 * (3.2) Fixed Effects Model (Preferred Specification)
-
 * ----------
 * LAGGED DEPENDENT VARIABLE – Dynamic Gravity
 * ----------
-
 * Create lagged trade (panel-aware)
 gen L1_ln_trade = .
 sort dyadid year
 by dyadid: replace L1_ln_trade = ln_trade[_n-1]
 * FE model with lagged DV
-xtreg ln_trade L1_ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india i.year, fe vce(cluster iso3_d)
+xtreg ln_trade L1_ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, fe vce(cluster iso3_d)
 
 * ----------
 * Controls for time-invariant partner-specific unobserved factors
 * Removes bias from omitted variables like historical/political ties
 * ----------
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe vce(cluster iso3_d)
 
 * Add year fixed effects to capture macro shocks (e.g., global crises)
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, fe vce(cluster iso3_d)
 
 * -----------
 * AGREEMENT-SPECIFIC FIXED EFFECT REGRESSIONS
 * -----------
 * ASEAN
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_asean i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_asean i.year, fe vce(cluster iso3_d)
 * Japan
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_japan i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_japan i.year, fe vce(cluster iso3_d)
 * Korea
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_korea i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_korea i.year, fe vce(cluster iso3_d)
 * Sri Lanka
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_srilanka i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_srilanka i.year, fe vce(cluster iso3_d)
 * Nepal
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_nepal i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_nepal i.year, fe vce(cluster iso3_d)
 * Bhutan
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_bhutan i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_bhutan i.year, fe vce(cluster iso3_d)
 * Alternatively, include all PTA dummies together:
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist ///
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
     pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan ///
     i.year, fe vce(cluster iso3_d)
 
 * Compare PTA impacts across agreements
 eststo clear
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_asean i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_asean i.year, fe vce(cluster iso3_d)
 eststo asean
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_japan i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_japan i.year, fe vce(cluster iso3_d)
 eststo japan
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_korea i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_korea i.year, fe vce(cluster iso3_d)
 eststo korea
 
 coefplot asean japan korea, ///
@@ -380,24 +416,23 @@ coefplot asean japan korea, ///
     xline(0)
 
 
-	
 * (3.3) Random Effects Model (For Comparison)
 * Assumes unobserved effects are uncorrelated with regressors
 * More efficient if assumption holds
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, re vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, re vce(cluster iso3_d)
 
 
 * (3.4) Hausman Test – Fixed Effects vs Random Effects
 * Purpose: To test whether RE is a consistent estimator.
 * Note: Hausman test cannot be used with clustered or robust SEs.
-* Therefore, temporarily re-run FE and RE models without vce(cluster ...)
+* Therefore, I temporarily re-run FE and RE models without vce(cluster ...)
 
 * Run FE model without clustering (only for Hausman)
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, fe
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe
 estimates store fe
 
 * Run RE model without clustering (only for Hausman)
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, re
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, re
 estimates store re
 
 * Perform Hausman test
@@ -407,28 +442,14 @@ hausman fe re, sigmamore
 * === Interpretation Guidance ===
 * - If p < 0.05 -> reject RE -> use FE model (RE is inconsistent)
 * - If p >= 0.05 -> fail to reject RE -> RE is consistent and may be preferred
-*
-* Important:
-* Return to using FE and RE models with clustered SEs (vce(cluster iso3_d))
-* for final reporting, as clustering accounts for within-group correlation.
 *********************************************************************
 
-
-* (3.5) Export vs Import Models (Optional – Only if disaggregated)
-* If there are variables splitting trade direction, e.g.:
-* gen ln_exports = ln_trade if direction == "EXP"
-* gen ln_imports = ln_trade if direction == "IMP"
-* Then estimate FE models for each:
-* xtreg ln_exports ln_gdp_o ln_gdp_d ln_dist pta_india, fe vce(cluster iso3_d)
-* xtreg ln_imports ln_gdp_o ln_gdp_d ln_dist pta_india, fe vce(cluster iso3_d)
-
-* Note: Only if disaggregated direction data is available.
 
 * ------------------------------------------------------------
 * OPTIONAL: I ADD Interaction Terms for Robustness
 * ------------------------------------------------------------
 * Test if PTA impact depends on shared institutions or characteristics
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang pta_wto, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff i.wto_d##i.pta_india, fe vce(cluster iso3_d)
 * Visualizing Marginal Effect of PTA by WTO Membership
 margins pta_india, at(wto_d=(0 1))
 marginsplot, title("PTA Effect by WTO Status") ///
@@ -443,8 +464,7 @@ marginsplot, title("PTA Impact Across Partner GDP Levels") ///
 	
 * Interaction with distance (moderation effect)
 gen pta_ln_dist = pta_india * ln_dist
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_ln_dist, fe vce(cluster iso3_d)
-
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_ln_dist, fe vce(cluster iso3_d)
 
 
 * ---------------------------------------------------------------
@@ -452,78 +472,82 @@ xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_ln_dist, fe vce(cluster i
 * Purpose: To confirm that the core findings hold across alternative specifications,
 *          dependent variables, interaction effects, and partner characteristics.
 * ---------------------------------------------------------------
-
 * (4.1) ALTERNATIVE DEPENDENT VARIABLES
 * Purpose: Test if results are consistent across different measures of trade
 
 * (a) IMF-based trade flow
+* Uses IMF data source as robustness check for BACI-based flows
+* Note: This variable already exists in the dataset
+
 gen ln_trade_imf = ln(tradeflow_imf_o + 1)
-xtreg ln_trade_imf ln_gdp_o ln_gdp_d ln_dist pta_india, fe vce(cluster iso3_d)
+xtreg ln_trade_imf ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe vce(cluster iso3_d)
 
-* (b) Manufacturing-only trade flow (from BACI sectoral data)
+* (b) Manufacturing-only trade flow (sectoral)
+* Tests whether PTA effects are stronger in specific sectors
+
 gen ln_manuf_trade = ln(manuf_tradeflow_baci + 1)
-xtreg ln_manuf_trade ln_gdp_o ln_gdp_d ln_dist pta_india, fe vce(cluster iso3_d)
-
+xtreg ln_manuf_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe vce(cluster iso3_d)
 
 
 * (4.2) LAGGED EFFECTS OF PREFERENTIAL TRADE AGREEMENTS
-* Purpose: Test if PTAs take time before influencing trade
+* Purpose: Test if PTA impacts take time to materialize
 
-* Lag PTA dummy for Japan agreement as an example (can be done for others)
-gen pta_japan_lag = .
+* Lag PTA dummy for Japan agreement as an example
 sort iso3_d year
-by iso3_d: replace pta_japan_lag = pta_japan[_n-1]
+by iso3_d: gen pta_japan_lag = pta_japan[_n-1]
 
-* Estimate model with contemporaneous and lagged PTA effects
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_japan pta_japan_lag, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+      pta_japan pta_japan_lag, fe vce(cluster iso3_d)
 
 
 * (4.3) HETEROGENEOUS EFFECTS (INTERACTIONS)
 * Purpose: Explore whether PTA effects differ by structural/institutional factors
 
-* (a) PTA effect moderated by economic size (partner GDP)
+* (a) PTA effect moderated by partner GDP (economic size)
 gen pta_gdp = pta_india * ln_gdp_d
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_gdp, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+      pta_india pta_gdp, fe vce(cluster iso3_d)
 
 * (b) PTA effect moderated by WTO membership
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_wto, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+      pta_india pta_wto, fe vce(cluster iso3_d)
 
 * (c) PTA effect moderated by shared official language
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+      pta_india pta_comlang, fe vce(cluster iso3_d)
 
-* (d) PTA effect moderated by distance (nonlinear moderator)
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_ln_dist, fe vce(cluster iso3_d)
+* (d) PTA effect moderated by distance
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+      pta_india pta_ln_dist, fe vce(cluster iso3_d)
 
 
 * (4.4) QUANTILE REGRESSION (DISTRIBUTIONAL ROBUSTNESS)
-* Purpose: Test if PTA effects vary across levels of trade intensity
-* NOTE: Panel quantile regression is advanced. I run pooled quantile regression here.
-* This helps check if PTA effects differ for low vs. high trade partners.
-* (a) Median regression (50th percentile)
-qreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, quantile(0.5)
+* Purpose: Check if PTA effects vary across trade intensity levels
 
-* (b) 25th percentile (lower trade flows)
-qreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, quantile(0.25)
+* (a) Median regression
+qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.5)
 
-* (c) 75th percentile (high trade flows)
-qreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india, quantile(0.75)
+* (b) 25th percentile
+qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.25)
 
-* ---------
-* PPML ESTIMATION – Robust to Heteroskedasticity
-* ----------
-* PPML with dyad and year fixed effects (absorbed)
-* ssc install ftools
-ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist pta_india, ///
+* (c) 75th percentile
+qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.75)
+
+
+* (4.5) PPML ESTIMATION – Robust to Heteroskedasticity
+* Use Poisson Pseudo-Maximum Likelihood estimator with fixed effects
+
+ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, ///
     absorb(iso3_d year) vce(cluster iso3_d)
 
-* Agreement-specific PPML
-ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist ///
+* Agreement-specific PTA effects using PPML
+ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
     pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan, ///
     absorb(iso3_d year) vce(cluster iso3_d)
 
-* Plotting PPML coefficients
+* Plotting PPML estimates
 eststo clear
-ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist pta_india, absorb(iso3_d year) vce(cluster iso3_d)
+ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, absorb(iso3_d year) vce(cluster iso3_d)
 eststo ppml_model
 
 coefplot ppml_model, drop(_cons) ///
@@ -531,13 +555,121 @@ coefplot ppml_model, drop(_cons) ///
     yline(0, lpattern(dash)) ///
     xline(0, lpattern(dash))
 
-	
-* -----------
-* PLACEBO TEST – False PTA Dummy
-* -----------
 
-* Create placebo PTA (e.g., assign PTA to non-agreement countries)
+* (4.6) PLACEBO TEST – False PTA Dummy
+* Purpose: Check if PTA effects are falsely detected in unrelated countries
+
 gen pta_placebo = (iso3_d == "FRA" | iso3_d == "MEX") & year >= 2008
 
-* Run placebo regression
-xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist pta_placebo i.year, fe vce(cluster iso3_d)
+xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_placebo i.year, fe vce(cluster iso3_d)
+
+* =====================================================
+* PHASE 5: EXPORT KEY RESULTS – PUBLICATION-STYLE OUTPUT
+* Purpose: Generate export-ready regression tables and descriptive outputs
+* =====================================================
+
+* Set working directory
+* Change it different from mine for re-use.
+cd "C:\Users\Administrator\Desktop\WORK\Assignments\ONES\Stata Thesis"
+
+
+* === SUMMARY STATISTICS ===
+* Log structure and variable type check
+log using variable_types.log, replace
+describe ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang pta_wto ///
+    pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan ///
+    pta_japan_lag pta_ln_dist pta_gdp ln_trade_imf ln_manuf_trade tradeflow_baci ///
+    kl_diff landl_diff hc_diff
+log close
+
+* Ensure numeric format for variables if needed
+foreach var in ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang pta_wto ///
+    pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan ///
+    pta_japan_lag pta_ln_dist pta_gdp ln_trade_imf ln_manuf_trade tradeflow_baci ///
+    kl_diff landl_diff hc_diff {
+    capture confirm numeric variable `var'
+    if _rc {
+        destring `var', replace force
+    }
+}
+
+* Summary statistics for core variables
+asdoc tabstat ln_trade ln_gdp_o ln_gdp_d ln_dist pta_india pta_comlang pta_wto kl_diff landl_diff hc_diff if !missing(ln_trade), ///
+    stat(mean sd min max n) columns(statistics) ///
+    save(gravity_results.doc), replace title(Summary Statistics of Key Variables)
+
+* Compare PTA vs. non-PTA partner statistics
+asdoc tabstat ln_trade ln_gdp_o ln_gdp_d ln_dist if pta_india == 1, ///
+    stat(mean sd min max n) columns(statistics), ///
+    append title(Summary Statistics: PTA Partners)
+asdoc tabstat ln_trade ln_gdp_o ln_gdp_d ln_dist if pta_india == 0, ///
+    stat(mean sd min max n) columns(statistics), ///
+    append title(Summary Statistics: Non-PTA Partners)
+
+
+* === AGGREGATED TABLE OF MAIN RESULTS ===
+* Store estimation results
+eststo clear
+eststo fe_main: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, fe vce(cluster iso3_d)
+eststo re_main: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, re vce(cluster iso3_d)
+eststo pta_combined: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+    pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan i.year, fe vce(cluster iso3_d)
+eststo ppml_main: ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, absorb(iso3_d year) vce(cluster iso3_d)
+eststo int_wto: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_wto, fe vce(cluster iso3_d)
+eststo int_comlang: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_comlang, fe vce(cluster iso3_d)
+eststo int_dist: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_ln_dist, fe vce(cluster iso3_d)
+eststo int_gdp: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_gdp, fe vce(cluster iso3_d)
+eststo lag_japan: xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_japan pta_japan_lag, fe vce(cluster iso3_d)
+eststo qreg_25: qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.25)
+eststo qreg_50: qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.5)
+eststo qreg_75: qreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, quantile(0.75)
+
+* Output tables
+asdoc esttab fe_main re_main pta_combined, cells(b(star fmt(3)) se(par fmt(3))) ///
+    starlevels(* 0.10 ** 0.05 *** 0.01) stats(r2 N, fmt(3 0)) ///
+    title(Aggregated Gravity Models with PTA) append
+
+asdoc esttab int_wto int_comlang int_dist int_gdp lag_japan, cells(b(star fmt(3)) se(par fmt(3))) ///
+    starlevels(* 0.10 ** 0.05 *** 0.01) stats(r2 N, fmt(3 0)) ///
+    title(Interactions and Lagged PTA Effects) append
+
+asdoc esttab qreg_25 qreg_50 qreg_75, cells(b(star fmt(3)) se(par fmt(3))) ///
+    starlevels(* 0.10 ** 0.05 *** 0.01) stats(r2 N, fmt(3 0)) ///
+    title(Quantile Regressions at Key Percentiles) append
+
+* Export key models separately with titles
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, fe vce(cluster iso3_d), ///
+    append title(Main Fixed Effects Model)
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india i.year, re vce(cluster iso3_d), ///
+    append title(Random Effects Model)
+
+* Agreement-specific regressions
+foreach pta in asean japan korea srilanka nepal bhutan {
+    asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_`pta' i.year, fe vce(cluster iso3_d), ///
+        append title(PTA Agreement Effect - `pta')
+}
+
+* Lagged PTA
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_japan pta_japan_lag, fe vce(cluster iso3_d), ///
+    append title(Lagged Effect - Japan Agreement)
+
+* Interaction terms
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_wto, fe vce(cluster iso3_d), append title(PTA × WTO)
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_comlang, fe vce(cluster iso3_d), append title(PTA × Common Language)
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_ln_dist, fe vce(cluster iso3_d), append title(PTA × Distance)
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india pta_gdp, fe vce(cluster iso3_d), append title(PTA × GDP)
+
+* Robustness: Alternative DVs
+asdoc xtreg ln_trade_imf ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe vce(cluster iso3_d), append title(IMF-Based Trade)
+asdoc xtreg ln_manuf_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, fe vce(cluster iso3_d), append title(Manufacturing Trade Only)
+
+* PPML estimation
+asdoc ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_india, absorb(iso3_d year) vce(cluster iso3_d), append title(PPML Model - Main)
+asdoc ppmlhdfe tradeflow_baci ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff ///
+    pta_asean pta_japan pta_korea pta_srilanka pta_nepal pta_bhutan, ///
+    absorb(iso3_d year) vce(cluster iso3_d), append title(PPML - PTA Specific)
+
+* Placebo regression
+asdoc xtreg ln_trade ln_gdp_o ln_gdp_d ln_dist kl_diff landl_diff hc_diff pta_placebo i.year, fe vce(cluster iso3_d), ///
+    append title(Placebo Test - False PTA)
+
